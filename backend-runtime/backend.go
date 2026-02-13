@@ -43,6 +43,7 @@ type Record struct {
 type Request struct {
 	In           Record       `json:"in"`
 	Dependencies []Dependency `json:"dep"`
+	Observations []Record     `json:"ob"`
 	Out          Record       `json:"out"`
 }
 
@@ -186,22 +187,18 @@ func buildRequestTree(records []Record, ec string) Request {
 			switch records[i].RecordType {
 			case RequestRecordType:
 				req.In = records[i]
-				break
 			case ResponseRecordType:
 				req.Out = records[i]
-				break
 			case DependencyRequestRecordType:
 				req.Dependencies[records[i].DepencencySequence].In = records[i]
 				if records[i].DepencencySequence > maxGsq {
 					maxGsq = records[i].DepencencySequence
 				}
-				break
 			case DependencyResponseRecordType:
 				req.Dependencies[records[i].DepencencySequence].Out = records[i]
 				if records[i].DepencencySequence > maxGsq {
 					maxGsq = records[i].DepencencySequence
 				}
-				break
 			default:
 				fmt.Printf("Unknown record %v\n", records[i])
 			}

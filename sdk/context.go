@@ -25,14 +25,15 @@ const (
 )
 
 type ServiceContext struct {
-	RequestContext     string
-	CauseContext       string
-	ExecutionContext   string
-	Debug              bool
-	DebugConfig        string // ServiceName:Hostname|ServiceName:Hostname tells debug host how to route requests
-	DebugHost          string
-	depencencySequence int
-	scopedSequenc      map[string]int
+	RequestContext      string
+	CauseContext        string
+	ExecutionContext    string
+	Debug               bool
+	DebugConfig         string // ServiceName:Hostname|ServiceName:Hostname tells debug host how to route requests
+	DebugHost           string
+	depencencySequence  int
+	scopedSequenc       map[string]int
+	observationSequence map[string]int
 }
 
 func (sc *ServiceContext) NewExecutionID() string {
@@ -59,15 +60,28 @@ func (sc *ServiceContext) ScopedDependencySequence(request *http.Request) int {
 	return retval
 }
 
+func (sc *ServiceContext) ObservationSequence(key string) int {
+	if i := strings.Index(key, "?"); i != -1 {
+		key = key[:i]
+	} else if i := strings.Index(key, "#"); i != -1 {
+		key = key[:i]
+	}
+
+	retval := sc.observationSequence[key]
+	sc.observationSequence[key]++
+	return retval
+}
+
 func NewServiceContext(r *http.Request) (*ServiceContext, error) {
 	s := &ServiceContext{
-		RequestContext:     r.Header.Get(RequestContextHeader),
-		CauseContext:       r.Header.Get(CauseContextHeader),
-		ExecutionContext:   r.Header.Get(ExecutionContextHeader),
-		DebugConfig:        r.Header.Get(DebugConfigHeader),
-		Debug:              r.Header.Get(ServiceDebugHeader) == DebugEnabled,
-		depencencySequence: 0,
-		scopedSequenc:      map[string]int{},
+		RequestContext:      r.Header.Get(RequestContextHeader),
+		CauseContext:        r.Header.Get(CauseContextHeader),
+		ExecutionContext:    r.Header.Get(ExecutionContextHeader),
+		DebugConfig:         r.Header.Get(DebugConfigHeader),
+		Debug:               r.Header.Get(ServiceDebugHeader) == DebugEnabled,
+		depencencySequence:  0,
+		scopedSequenc:       map[string]int{},
+		observationSequence: map[string]int{},
 	}
 
 	if s.Debug {
