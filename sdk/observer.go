@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/gob"
 	"fmt"
 	"reflect"
 	"time"
@@ -82,6 +83,16 @@ func (o *StateObserver[T]) Unmarshal(data []byte) (T, error) {
 func NewStateObserver[T any](name string) *StateObserver[T] {
 	var value T
 	vt := reflect.TypeOf(value)
+	encode, decode := getEncDec[T](vt)
+
+	return &StateObserver[T]{
+		name:   name,
+		encode: encode,
+		decode: decode,
+	}
+}
+
+func getEncDec[T any](vt reflect.Type) (func(T) ([]byte, error), func([]byte) (T, error)) {
 	var encode func(T) ([]byte, error)
 	var decode func([]byte) (T, error)
 
@@ -159,18 +170,27 @@ func NewStateObserver[T any](name string) *StateObserver[T] {
 			val, _ := v.(T)
 			return val, err
 		}
-	case reflect.Struct:
-	case reflect.Array:
-	case reflect.Slice:
-	case reflect.Map:
-	case reflect.Pointer:
+	case reflect.Struct, reflect.Array, reflect.Slice, reflect.Map, reflect.Pointer:
+		size := vt.Size()
+		encode = func(t T) ([]byte, error) {
+			buffer := bytes.NewBuffer(make([]byte, 0, size))
+			buffer.Reset()
+			enc := gob.NewEncoder(buffer)
+			err := enc.Encode(t)
+			if err != nil {
+				return nil, err
+			}
+			return buffer.Bytes(), nil
+		}
+		decode = func(b []byte) (T, error) {
+			var value T
+			dec := gob.NewDecoder(bytes.NewBuffer(b))
+			err := dec.Decode(&value)
+			return value, err
+		}
 	default:
 
 	}
 
-	return &StateObserver[T]{
-		name:   name,
-		encode: encode,
-		decode: decode,
-	}
+	return encode, decode
 }
