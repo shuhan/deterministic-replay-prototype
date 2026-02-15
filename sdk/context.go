@@ -34,6 +34,7 @@ type ServiceContext struct {
 	depencencySequence  int
 	scopedSequenc       map[string]int
 	observationSequence map[string]int
+	observationData     map[string][][]byte
 }
 
 func (sc *ServiceContext) NewExecutionID() string {
@@ -70,6 +71,15 @@ func (sc *ServiceContext) ObservationSequence(key string) int {
 	retval := sc.observationSequence[key]
 	sc.observationSequence[key]++
 	return retval
+}
+
+func (sc *ServiceContext) ObservationData(key string, seq int) []byte {
+	if vals, ok := sc.observationData[key]; ok {
+		if len(vals) > seq {
+			return vals[seq]
+		}
+	}
+	return nil
 }
 
 func NewServiceContext(r *http.Request) (*ServiceContext, error) {
