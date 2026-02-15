@@ -35,8 +35,8 @@ func (o *StateObserver[T]) Observe(ctx context.Context, value T) (T, error) {
 		data := sc.ObservationData(o.name, oq)
 		return o.Unmarshal(data)
 	} else {
-		if outBody, err := o.Marshal(value); err == nil {
-			go func() {
+		go func() {
+			if outBody, err := o.Marshal(value); err == nil {
 				Log(Record{
 					RequestContext:      sc.RequestContext,
 					CauseContext:        sc.CauseContext,
@@ -56,10 +56,10 @@ func (o *StateObserver[T]) Observe(ctx context.Context, value T) (T, error) {
 					Body:                outBody,
 					StatusCode:          0,
 				})
-			}()
-		} else {
-			return value, err
-		}
+			} else {
+				fmt.Printf("Error enocding observation: %s\n", err.Error())
+			}
+		}()
 	}
 
 	return value, nil
