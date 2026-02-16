@@ -26,13 +26,19 @@ type HitCount struct {
 	HitCount int    `json:"hc"`
 }
 
+var counterObserver = sdk.NewStateObserver[int]("HitCounter")
+
 func getHandler(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
-	counter[name]++
+
+	count := counterObserver.ObserveFunc(r.Context(), func() int {
+		counter[name]++
+		return counter[name]
+	})
 
 	res := HitCount{
 		Name:     strings.ToUpper(name),
-		HitCount: counter[name],
+		HitCount: count,
 	}
 
 	bytes, err := json.Marshal(res)

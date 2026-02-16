@@ -15,6 +15,7 @@ var (
 	debugEnabled bool
 	systemHost   string
 	debugHost    string
+	observerHost string
 	feeder       chan<- Record
 	cancelFunc   context.CancelFunc
 )
@@ -23,6 +24,7 @@ func Init(name, host string, log, debug bool) {
 	serviceName = name
 	systemHost = host
 	debugHost = systemHost + "/runtime/proxy"
+	observerHost = systemHost + "/runtime/observations"
 	logEnabled = log
 	debugEnabled = debug
 	InstrumentClient(DefaultClient)

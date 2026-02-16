@@ -19,30 +19,35 @@ const (
 	ResponseRecordType           RecordType = "response"
 	DependencyRequestRecordType  RecordType = "dependency-request"
 	DependencyResponseRecordType RecordType = "dependency-response"
+	ObservedRecordType           RecordType = "observed"
 )
 
 type Record struct {
-	RequestContext     string              `json:"rc"`
-	CauseContext       string              `json:"cc"`
-	ExecutionContext   string              `json:"ec"`
-	DependencyContext  string              `json:"dc"`
-	RecordType         RecordType          `json:"rt"`
-	Method             string              `json:"rm"`
-	Time               time.Time           `json:"tm"`
-	Duration           int64               `json:"dr"`
-	DepencencySequence int                 `json:"dq"`
-	ScopedSequence     int                 `json:"sq"`
-	ServiceName        string              `json:"sn"`
-	Host               string              `json:"rh"`
-	Uri                string              `json:"ru"`
-	Header             map[string][]string `json:"he"`
-	Body               []byte              `json:"bd"`
-	StatusCode         int                 `json:"st"`
+	RequestContext      string              `json:"rc"`
+	CauseContext        string              `json:"cc"`
+	ExecutionContext    string              `json:"ec"`
+	DependencyContext   string              `json:"dc"`
+	RecordType          RecordType          `json:"rt"`
+	Method              string              `json:"rm"`
+	Time                time.Time           `json:"tm"`
+	Duration            int64               `json:"dr"`
+	DepencencySequence  int                 `json:"dq"`
+	ScopedSequence      int                 `json:"sq"`
+	ObservationSequence int                 `json:"oq"`
+	ServiceName         string              `json:"sn"`
+	ObservationName     string              `json:"on"`
+	Host                string              `json:"rh"`
+	Uri                 string              `json:"ru"`
+	Header              map[string][]string `json:"he"`
+	Body                []byte              `json:"bd"`
+	ObservationError    []byte              `json:"oe"`
+	StatusCode          int                 `json:"st"`
 }
 
 type Request struct {
 	In           Record       `json:"in"`
 	Dependencies []Dependency `json:"dep"`
+	Observations []Record     `json:"ob"`
 	Out          Record       `json:"out"`
 }
 
@@ -65,6 +70,7 @@ func main() {
 	http.HandleFunc("/runtime/record", recordHandler)
 	http.HandleFunc("/runtime/replay", replayHandler)
 	http.HandleFunc("/runtime/proxy", proxyHandler)
+	http.HandleFunc("/runtime/observations", observationHandler)
 
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		panic(err)
@@ -175,33 +181,36 @@ func replayHandler(w http.ResponseWriter, r *http.Request) {
 func buildRequestTree(records []Record, ec string) Request {
 	req := Request{
 		Dependencies: make([]Dependency, len(records)),
+		Observations: make([]Record, len(records)),
 	}
 
 	notUsed := make([]Record, 0, len(records))
 
 	maxGsq := -1
+	maxOsq := -1
 
 	for i := range records {
 		if records[i].ExecutionContext == ec {
 			switch records[i].RecordType {
 			case RequestRecordType:
 				req.In = records[i]
-				break
 			case ResponseRecordType:
 				req.Out = records[i]
-				break
 			case DependencyRequestRecordType:
 				req.Dependencies[records[i].DepencencySequence].In = records[i]
 				if records[i].DepencencySequence > maxGsq {
 					maxGsq = records[i].DepencencySequence
 				}
-				break
 			case DependencyResponseRecordType:
 				req.Dependencies[records[i].DepencencySequence].Out = records[i]
 				if records[i].DepencencySequence > maxGsq {
 					maxGsq = records[i].DepencencySequence
 				}
-				break
+			case ObservedRecordType:
+				req.Observations[records[i].ObservationSequence] = records[i]
+				if records[i].ObservationSequence > maxOsq {
+					maxOsq = records[i].ObservationSequence
+				}
 			default:
 				fmt.Printf("Unknown record %v\n", records[i])
 			}
@@ -211,6 +220,7 @@ func buildRequestTree(records []Record, ec string) Request {
 	}
 
 	req.Dependencies = req.Dependencies[0 : maxGsq+1]
+	req.Observations = req.Observations[0 : maxOsq+1]
 
 	for i := range req.Dependencies {
 		if req.Dependencies[i].In.DependencyContext != "" {
@@ -366,4 +376,70 @@ func parseDebugConfig(config string) map[string]string {
 	}
 
 	return retval
+}
+
+type ObservationData struct {
+	Body             []byte `json:"bd"`
+	ObservationError []byte `json:"oe"`
+}
+
+type Observations struct {
+	Data map[string]map[int]ObservationData `json:"data"`
+}
+
+func observationHandler(w http.ResponseWriter, r *http.Request) {
+	var (
+		badRequest bool
+		oErr       error
+	)
+
+	defer func() {
+		if badRequest {
+			w.WriteHeader(http.StatusBadRequest)
+		} else if oErr != nil {
+			fmt.Printf("ERROR: %s\n", oErr.Error())
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}()
+
+	if r.Method != "GET" {
+		badRequest = true
+		return
+	}
+
+	rc := r.Header.Get(RequestContextHeader)
+	dc := r.Header.Get(DebugConfigHeader)
+
+	mapping := parseDebugConfig(dc)
+
+	rwMux.RLock()
+	defer rwMux.RUnlock()
+	if records, ok := data[rc]; ok {
+
+		obs := Observations{
+			Data: make(map[string]map[int]ObservationData, len(records)),
+		}
+
+		for _, rec := range records {
+			if rec.RecordType == ObservedRecordType {
+				mappingKey := strings.ToLower(rec.ServiceName + ":" + rec.ObservationName)
+				if mapped, ok := mapping[mappingKey]; !(ok && mapped == "pass") {
+					if _, ok := obs.Data[rec.ObservationName]; !ok {
+						obs.Data[rec.ObservationName] = make(map[int]ObservationData)
+					}
+					obs.Data[rec.ObservationName][rec.ScopedSequence] = ObservationData{Body: rec.Body, ObservationError: rec.ObservationError}
+				}
+			}
+		}
+
+		data, err := json.Marshal(obs)
+		if err != nil {
+			oErr = err
+			return
+		}
+
+		w.Write(data)
+	} else {
+		w.WriteHeader(http.StatusNotFound)
+	}
 }

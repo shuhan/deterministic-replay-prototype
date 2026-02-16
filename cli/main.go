@@ -25,7 +25,6 @@ func main() {
 			panic(err)
 		}
 		printRequest(request, request.Out.StatusCode, 0)
-		break
 	case ReplayAction:
 		if len(input.Mapping) == 0 {
 			fmt.Println("No service mapping to replay")
@@ -37,8 +36,10 @@ func main() {
 			panic(err)
 		}
 
-		replayRequest(request, input.Mapping)
-		break
+		count := replayRequest(request, input.Mapping, 0)
+		if count == 0 {
+			fmt.Println("No replayable service mapping")
+		}
 	default:
 		fmt.Println("Unknown action")
 	}
@@ -77,7 +78,12 @@ func printRequest(request Request, statusCode, level int) {
 	if serviceName == "" {
 		serviceName = "[External]"
 	}
-	fmt.Printf("%s->%s (%d)\n", pre, serviceName, statusCode)
+	fmt.Printf("%s-> %s (%d)\n", pre, serviceName, statusCode)
+
+	obPre := getPreposition(level + 1)
+	for i := range request.Observations {
+		fmt.Printf("%s-> Internal <%s[%d]>\n", obPre, request.Observations[i].ObservationName, request.Observations[i].ScopedSequence)
+	}
 
 	for i := range request.Dependencies {
 		printRequest(request.Dependencies[i].Reference, request.Dependencies[i].Out.StatusCode, level+1)
@@ -114,22 +120,23 @@ func parseInput() (Input, error) {
 	return i, nil
 }
 
-func replayRequest(request Request, mapping map[string]string) {
+func replayRequest(request Request, mapping map[string]string, count int) int {
 	serviceKey := strings.ToLower(request.In.ServiceName)
 
 	if host, ok := mapping[serviceKey]; ok {
+		count++
 		in := request.In
 		url := "http://" + host + in.Uri
 		var body io.Reader
 
-		if in.Body != nil && len(in.Body) > 0 {
+		if len(in.Body) > 0 {
 			body = bytes.NewBuffer(in.Body)
 		}
 
 		httpRquest, err := http.NewRequest(in.Method, url, body)
 		if err != nil {
 			fmt.Printf("request error %s\n", err.Error())
-			return
+			return count
 		}
 
 		fmt.Println(url)
@@ -144,14 +151,14 @@ func replayRequest(request Request, mapping map[string]string) {
 		resp, err := http.DefaultClient.Do(httpRquest)
 		if err != nil {
 			fmt.Printf("response error %s\n", err.Error())
-			return
+			return count
 		}
 
 		fmt.Printf("Response Status: %d\n", resp.StatusCode)
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
 			fmt.Printf("read error %s\n", err.Error())
-			return
+			return count
 		}
 
 		fmt.Printf("Body: %s", string(respBody))
@@ -159,10 +166,11 @@ func replayRequest(request Request, mapping map[string]string) {
 		// Only replay dependencies if the request itself isn't replayed
 		for _, dep := range request.Dependencies {
 			if dep.Reference.In.ServiceName != "" {
-				replayRequest(dep.Reference, mapping)
+				count += replayRequest(dep.Reference, mapping, count)
 			}
 		}
 	}
+	return count
 }
 
 func debugConfig(mapping map[string]string) string {
