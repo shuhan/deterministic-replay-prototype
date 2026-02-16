@@ -48,3 +48,13 @@ You can also unfreeze any of the other services, or multiple like
 ```
 go run . replay [request-context] --map serviceA=localhost:3000 serviceB=localhost:3001
 ```
+
+### 4. Observers
+
+Observers are a wrap around an state. For hidden states like config, cache access, data etc, a named typed observer can be used to freeze the variable or function response. In this example ServiceC has a hidden state, a counter. An observer is used to wrap the hit counter. Which mean's in debug even the stateful serviceC will behave determinstically. However to debug an observed state can be unfrozen like
+
+```
+go run . replay [request-context] --map serviceC=localhost:3002 serviceC:HitCounter=pass
+```
+
+Here the pass indicates pass through, unfreezing the state.
