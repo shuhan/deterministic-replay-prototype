@@ -30,5 +30,6 @@ type Record struct {
 	Uri                 string              `json:"ru"`
 	Header              map[string][]string `json:"he"`
 	Body                []byte              `json:"bd"`
+	ObservationError    []byte              `json:"oe"`
 	StatusCode          int                 `json:"st"`
 }

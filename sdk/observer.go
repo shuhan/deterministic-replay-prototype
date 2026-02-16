@@ -22,18 +22,26 @@ type StateObserver[T any] struct {
 	decode func([]byte) (T, error)
 }
 
-func (o *StateObserver[T]) Observe(ctx context.Context, value T) (T, error) {
+func (o *StateObserver[T]) Observe(ctx context.Context, value T) T {
 	sc, ok := ctx.Value(serviceContextKey).(*ServiceContext)
 
 	if !ok {
-		return value, fmt.Errorf("Missing tracing context, please use the original request context")
+		fmt.Println("Missing tracing context, please use the original request context")
+		return value
 	}
 
-	oq := sc.ObservationSequence(o.name)
+	oq := sc.ObservationSequence()
+	seq := sc.ObservationScopedDependencySequence(o.name)
 
 	if sc.Debug {
-		data := sc.ObservationData(o.name, oq)
-		return o.Unmarshal(data)
+		if data, ok := sc.ObservationData(o.name, seq); ok {
+			val, err := o.Unmarshal(data.Body)
+			if err != nil {
+				fmt.Printf("Unmarshalling error for %s Error: %s\n", o.name, err.Error())
+				return value
+			}
+			return val
+		}
 	} else {
 		go func() {
 			if outBody, err := o.Marshal(value); err == nil {
@@ -46,7 +54,52 @@ func (o *StateObserver[T]) Observe(ctx context.Context, value T) (T, error) {
 					Time:                time.Now(),
 					Duration:            0,
 					DepencencySequence:  0,
-					ScopedSequence:      0,
+					ScopedSequence:      seq,
+					ObservationSequence: oq,
+					ServiceName:         serviceName,
+					ObservationName:     o.name,
+					Host:                "",
+					Uri:                 "",
+					Header:              nil,
+					Body:                outBody,
+					StatusCode:          0,
+				})
+			} else {
+				fmt.Printf("Error enocding observation: %s\n", err.Error())
+			}
+		}()
+	}
+
+	return value
+}
+
+func (o *StateObserver[T]) ObserveWithErr(ctx context.Context, value T) (T, error) {
+	sc, ok := ctx.Value(serviceContextKey).(*ServiceContext)
+
+	if !ok {
+		return value, fmt.Errorf("Missing tracing context, please use the original request context")
+	}
+
+	oq := sc.ObservationSequence()
+	seq := sc.ObservationScopedDependencySequence(o.name)
+
+	if sc.Debug {
+		if data, ok := sc.ObservationData(o.name, seq); ok {
+			return o.Unmarshal(data.Body)
+		}
+	} else {
+		go func() {
+			if outBody, err := o.Marshal(value); err == nil {
+				Log(Record{
+					RequestContext:      sc.RequestContext,
+					CauseContext:        sc.CauseContext,
+					ExecutionContext:    sc.ExecutionContext,
+					RecordType:          ObservedRecordType,
+					Method:              "",
+					Time:                time.Now(),
+					Duration:            0,
+					DepencencySequence:  0,
+					ScopedSequence:      seq,
 					ObservationSequence: oq,
 					ServiceName:         serviceName,
 					ObservationName:     o.name,
@@ -63,6 +116,121 @@ func (o *StateObserver[T]) Observe(ctx context.Context, value T) (T, error) {
 	}
 
 	return value, nil
+}
+
+func (o *StateObserver[T]) ObserveFunc(ctx context.Context, valueFunc func() T) T {
+	sc, ok := ctx.Value(serviceContextKey).(*ServiceContext)
+
+	if !ok {
+		fmt.Println("Missing tracing context, please use the original request context")
+		return valueFunc()
+	}
+
+	oq := sc.ObservationSequence()
+	seq := sc.ObservationScopedDependencySequence(o.name)
+
+	if sc.Debug {
+		if data, ok := sc.ObservationData(o.name, seq); ok {
+			val, err := o.Unmarshal(data.Body)
+			if err != nil {
+				fmt.Printf("Unmarshalling error for %s Error: %s\n", o.name, err.Error())
+				return valueFunc()
+			}
+			return val
+		}
+		return valueFunc()
+	} else {
+		value := valueFunc()
+		go func() {
+			if outBody, err := o.Marshal(value); err == nil {
+				Log(Record{
+					RequestContext:      sc.RequestContext,
+					CauseContext:        sc.CauseContext,
+					ExecutionContext:    sc.ExecutionContext,
+					RecordType:          ObservedRecordType,
+					Method:              "",
+					Time:                time.Now(),
+					Duration:            0,
+					DepencencySequence:  0,
+					ScopedSequence:      seq,
+					ObservationSequence: oq,
+					ServiceName:         serviceName,
+					ObservationName:     o.name,
+					Host:                "",
+					Uri:                 "",
+					Header:              nil,
+					Body:                outBody,
+					StatusCode:          0,
+				})
+			} else {
+				fmt.Printf("Error enocding observation: %s\n", err.Error())
+			}
+		}()
+
+		return value
+	}
+}
+
+func (o *StateObserver[T]) ObserveFuncWithErr(ctx context.Context, valueFunc func() (T, error)) (T, error) {
+	sc, ok := ctx.Value(serviceContextKey).(*ServiceContext)
+
+	if !ok {
+		fmt.Println("Missing tracing context, please use the original request context")
+		return valueFunc()
+	}
+
+	oq := sc.ObservationSequence()
+	seq := sc.ObservationScopedDependencySequence(o.name)
+
+	if sc.Debug {
+		if data, ok := sc.ObservationData(o.name, seq); ok {
+
+			if data.ObservationError != nil {
+				val, _ := o.Unmarshal(data.Body)
+				return val, fmt.Errorf("%s", string(data.ObservationError))
+			}
+
+			return o.Unmarshal(data.Body)
+		}
+		return valueFunc()
+	} else {
+		value, valueErr := valueFunc()
+		go func() {
+			if outBody, err := o.Marshal(value); err == nil {
+
+				var errorBody []byte
+
+				if valueErr != nil {
+					errorBody = []byte(valueErr.Error())
+				}
+
+				Log(Record{
+					RequestContext:      sc.RequestContext,
+					CauseContext:        sc.CauseContext,
+					ExecutionContext:    sc.ExecutionContext,
+					RecordType:          ObservedRecordType,
+					Method:              "",
+					Time:                time.Now(),
+					Duration:            0,
+					DepencencySequence:  0,
+					ScopedSequence:      seq,
+					ObservationSequence: oq,
+					ServiceName:         serviceName,
+					ObservationName:     o.name,
+					Host:                "",
+					Uri:                 "",
+					Header:              nil,
+					Body:                outBody,
+					ObservationError:    errorBody,
+					StatusCode:          0,
+				})
+			} else {
+				fmt.Printf("Error enocding observation: %s\n", err.Error())
+			}
+		}()
+
+		return value, valueErr
+	}
 }
 
 func (o *StateObserver[T]) Marshal(value T) ([]byte, error) {

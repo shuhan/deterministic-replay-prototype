@@ -20,7 +20,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	gsq := sc.GlobalDependencySequence()
-	seq := sc.ScopedDependencySequence(req)
+	seq := sc.RequestScopedDependencySequence(req)
 
 	dependencyContext := sc.NewExecutionID()
 
