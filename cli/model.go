@@ -17,14 +17,17 @@ const (
 type Action string
 
 const (
-	ShowAction   = Action("show")
-	ReplayAction = Action("replay")
+	ShowAction    = Action("show")
+	ReplayAction  = Action("replay")
+	RegressAction = Action("regress")
 )
 
 type Input struct {
 	Action         Action
 	RequestContext string
 	Mapping        map[string]string
+	ValidStatus    []int
+	MaxCount       int
 }
 
 type RecordType string

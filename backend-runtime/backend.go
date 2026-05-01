@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,10 +68,11 @@ func main() {
 
 	data = make(map[string][]Record)
 
-	http.HandleFunc("/runtime/record", recordHandler)
-	http.HandleFunc("/runtime/replay", replayHandler)
-	http.HandleFunc("/runtime/proxy", proxyHandler)
-	http.HandleFunc("/runtime/observations", observationHandler)
+	http.HandleFunc("/record", recordHandler)
+	http.HandleFunc("/list", listHandler)
+	http.HandleFunc("/tree", reqTreeHandler)
+	http.HandleFunc("/proxy", proxyHandler)
+	http.HandleFunc("/observations", observationHandler)
 
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		panic(err)
@@ -126,7 +128,131 @@ func recordHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func replayHandler(w http.ResponseWriter, r *http.Request) {
+func listHandler(w http.ResponseWriter, r *http.Request) {
+	var (
+		badRequest bool
+		oErr       error
+	)
+
+	defer func() {
+		if badRequest {
+			w.WriteHeader(http.StatusBadRequest)
+		} else if oErr != nil {
+			fmt.Printf("ERROR: %s\n", oErr.Error())
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}()
+
+	if r.Method != "GET" {
+		badRequest = true
+		return
+	}
+
+	queries := r.URL.Query()
+	sr := queries.Get("sr") // Service names ; seperated
+	ex := queries.Get("ex") // Excluded request contexts ; seperated
+	st := queries.Get("st") // HTTP Status Codes ; seperated
+	n := queries.Get("n")
+
+	if sr == "" {
+		badRequest = true
+		return
+	}
+
+	serviceNames := strings.Split(sr, ";")
+
+	for i := range serviceNames {
+		serviceNames[i] = strings.ToLower(serviceNames[i])
+	}
+
+	MaxCount := 10
+
+	if n != "" {
+		MaxCount, oErr = strconv.Atoi(n)
+		if oErr != nil {
+			badRequest = true
+			return
+		}
+	}
+
+	statusFilterEnabled := st != ""
+	statuses := []int{}
+
+	if statusFilterEnabled {
+		sts := strings.SplitSeq(st, ";")
+
+		for s := range sts {
+			status, err := strconv.Atoi(s)
+			if err != nil {
+				oErr = err
+				return
+			}
+			statuses = append(statuses, status)
+		}
+	}
+
+	excludes := []string{}
+
+	if ex != "" {
+		excludes = strings.Split(ex, ";")
+	}
+
+	rwMux.RLock()
+	defer rwMux.RUnlock()
+
+	resp := []string{}
+
+Itr:
+	for key, recs := range data {
+
+		hasService := false
+
+		for ri := range recs {
+			if inArray(serviceNames, strings.ToLower(recs[ri].ServiceName)) {
+				hasService = true
+			}
+
+			if statusFilterEnabled {
+				if recs[ri].RecordType == DependencyResponseRecordType || recs[ri].RecordType == ResponseRecordType {
+					if !inArray(statuses, recs[ri].StatusCode) {
+						continue Itr
+					}
+				}
+			}
+		}
+
+		if !hasService {
+			continue
+		}
+
+		if !inArray(excludes, key) {
+			resp = append(resp, key)
+			if len(resp) == MaxCount {
+				break
+			}
+		}
+	}
+
+	if body, oErr := json.Marshal(resp); oErr == nil {
+		w.Header().Add("Content-Type", "application/json")
+		_, oErr = w.Write(body)
+	}
+}
+
+func inArray[T any](haystack []T, niddle T) bool {
+	if len(haystack) == 0 {
+		return false
+	}
+
+	for _, h := range haystack {
+		if reflect.DeepEqual(h, niddle) {
+			return true
+		}
+	}
+	return false
+}
+
+func reqTreeHandler(w http.ResponseWriter, r *http.Request) {
 	var (
 		badRequest bool
 		oErr       error

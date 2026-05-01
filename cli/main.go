@@ -7,10 +7,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 )
 
-const debugHost = "http://localhost:8080/runtime/replay?rc="
+const systemHost = "http://localhost:8080"
 
 func main() {
 	input, err := parseInput()
@@ -40,15 +41,82 @@ func main() {
 		if count == 0 {
 			fmt.Println("No replayable service mapping")
 		}
+	case RegressAction:
+		if len(input.Mapping) == 0 {
+			fmt.Println("No service mapping to replay")
+			return
+		}
+
+		serviceNames := []string{}
+		for k := range input.Mapping {
+			serviceNames = append(serviceNames, k)
+		}
+
+		list, err := getList(serviceNames, []string{input.RequestContext}, input.ValidStatus, input.MaxCount)
+		if err != nil {
+			panic(err)
+		}
+
+		regressFailCount := 0
+
+		for i, rc := range list {
+			fmt.Printf("Regressing request (%d) %s\n", i+1, rc)
+			request, err := getRequest(rc)
+			if err != nil {
+				fmt.Printf("Error regressing request: %s\n", err.Error())
+				regressFailCount++
+				continue
+			}
+
+			_, passed := regressRequest(request, input.Mapping, 0)
+			if !passed {
+				fmt.Println("Regression failed")
+				regressFailCount++
+			}
+		}
+
+		if regressFailCount > 0 {
+			fmt.Printf("Regression Test Failed: %d out of %d requests\n", regressFailCount, len(list))
+		} else {
+			fmt.Println("Regression Test Passed!")
+		}
+
 	default:
 		fmt.Println("Unknown action")
 	}
 }
 
-func getRequest(rc string) (Request, error) {
-	replayUri := debugHost + rc
+func getList(serviceNames []string, excludedContexts []string, statusCodes []int, max int) ([]string, error) {
+	statusCodesStr := []string{}
+	for _, c := range statusCodes {
+		statusCodesStr = append(statusCodesStr, strconv.Itoa(c))
+	}
+	listUri := systemHost + "/list?sr=" + strings.Join(serviceNames, ";") + "&ex=" + strings.Join(excludedContexts, ";") + "&st=" + strings.Join(statusCodesStr, ";") + "&n=" + strconv.Itoa(max)
 
-	resp, err := http.Get(replayUri)
+	resp, err := http.Get(listUri)
+	if err != nil {
+		panic(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return []string{}, fmt.Errorf("Please check input")
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return []string{}, err
+	}
+
+	var list []string
+
+	if err = json.Unmarshal(data, &list); err != nil {
+		return []string{}, err
+	}
+	return list, nil
+}
+
+func getRequest(rc string) (Request, error) {
+	treeUri := systemHost + "/tree?rc=" + rc
+
+	resp, err := http.Get(treeUri)
 	if err != nil {
 		panic(err)
 	}
@@ -94,7 +162,9 @@ func parseInput() (Input, error) {
 	args := os.Args[1:]
 
 	i := Input{
-		Mapping: map[string]string{},
+		Mapping:     map[string]string{},
+		ValidStatus: []int{200},
+		MaxCount:    10,
 	}
 
 	if len(args) < 2 {
@@ -184,4 +254,64 @@ func debugConfig(mapping map[string]string) string {
 	}
 
 	return retval
+}
+
+func regressRequest(request Request, mapping map[string]string, count int) (int, bool) {
+	serviceKey := strings.ToLower(request.In.ServiceName)
+
+	requestRegPassed := true
+
+	if host, ok := mapping[serviceKey]; ok {
+		count++
+		in := request.In
+		url := "http://" + host + in.Uri
+		var body io.Reader
+
+		if len(in.Body) > 0 {
+			body = bytes.NewBuffer(in.Body)
+		}
+
+		httpRquest, err := http.NewRequest(in.Method, url, body)
+		if err != nil {
+			fmt.Printf("request error %s\n", err.Error())
+			return count, false
+		}
+
+		fmt.Println(url)
+
+		httpRquest.Header = in.Header
+		httpRquest.Header.Set(RequestContextHeader, in.RequestContext)
+		httpRquest.Header.Set(CauseContextHeader, in.CauseContext)
+		httpRquest.Header.Set(ExecutionContextHeader, in.ExecutionContext)
+		httpRquest.Header.Set(ServiceDebugHeader, DebugEnabled)
+		httpRquest.Header.Set(DebugConfigHeader, debugConfig(mapping))
+
+		resp, err := http.DefaultClient.Do(httpRquest)
+		if err != nil {
+			fmt.Printf("response error %s\n", err.Error())
+			return count, false
+		}
+
+		fmt.Printf("Response Status: %d\n", resp.StatusCode)
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			fmt.Printf("read error %s\n", err.Error())
+			return count, false
+		}
+
+		requestRegPassed = requestRegPassed && bytes.Equal(respBody, request.Out.Body)
+
+		fmt.Printf("Body: %s", string(respBody))
+	} else {
+		// Only regress dependencies if the request itself isn't regressed
+		for _, dep := range request.Dependencies {
+			if dep.Reference.In.ServiceName != "" {
+				regCount, regPassed := regressRequest(dep.Reference, mapping, count)
+				count += regCount
+				requestRegPassed = requestRegPassed && regPassed
+			}
+		}
+	}
+
+	return count, requestRegPassed
 }

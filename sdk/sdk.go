@@ -23,8 +23,8 @@ var (
 func Init(name, host string, log, debug bool) {
 	serviceName = name
 	systemHost = host
-	debugHost = systemHost + "/runtime/proxy"
-	observerHost = systemHost + "/runtime/observations"
+	debugHost = systemHost + "/proxy"
+	observerHost = systemHost + "/observations"
 	logEnabled = log
 	debugEnabled = debug
 	InstrumentClient(DefaultClient)
@@ -50,7 +50,7 @@ func processInBackground(host string) (chan<- Record, context.CancelFunc) {
 
 	go func(feederChan <-chan Record, ctx context.Context) {
 		records := make([]Record, 0, 100)
-		postUrl := host + "/runtime/record"
+		postUrl := host + "/record"
 		client := &http.Client{}
 
 		for {
