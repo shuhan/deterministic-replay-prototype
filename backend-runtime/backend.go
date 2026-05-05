@@ -159,7 +159,7 @@ func listHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	serviceNames := strings.Split(sr, ";")
+	serviceNames := strings.Split(sr, "|")
 
 	for i := range serviceNames {
 		serviceNames[i] = strings.ToLower(serviceNames[i])
@@ -179,7 +179,7 @@ func listHandler(w http.ResponseWriter, r *http.Request) {
 	statuses := []int{}
 
 	if statusFilterEnabled {
-		sts := strings.SplitSeq(st, ";")
+		sts := strings.SplitSeq(st, "|")
 
 		for s := range sts {
 			status, err := strconv.Atoi(s)
@@ -194,7 +194,7 @@ func listHandler(w http.ResponseWriter, r *http.Request) {
 	excludes := []string{}
 
 	if ex != "" {
-		excludes = strings.Split(ex, ";")
+		excludes = strings.Split(ex, "|")
 	}
 
 	rwMux.RLock()

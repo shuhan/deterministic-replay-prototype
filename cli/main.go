@@ -78,7 +78,7 @@ func main() {
 		if regressFailCount > 0 {
 			fmt.Printf("Regression Test Failed: %d out of %d requests\n", regressFailCount, len(list))
 		} else {
-			fmt.Println("Regression Test Passed!")
+			fmt.Printf("Regression Test Passed! (%d/%d)\n", len(list), len(list))
 		}
 
 	default:
@@ -91,13 +91,14 @@ func getList(serviceNames []string, excludedContexts []string, statusCodes []int
 	for _, c := range statusCodes {
 		statusCodesStr = append(statusCodesStr, strconv.Itoa(c))
 	}
-	listUri := systemHost + "/list?sr=" + strings.Join(serviceNames, ";") + "&ex=" + strings.Join(excludedContexts, ";") + "&st=" + strings.Join(statusCodesStr, ";") + "&n=" + strconv.Itoa(max)
+	listUri := systemHost + "/list?sr=" + strings.Join(serviceNames, "|") + "&ex=" + strings.Join(excludedContexts, "|") + "&st=" + strings.Join(statusCodesStr, "|") + "&n=" + strconv.Itoa(max)
 
 	resp, err := http.Get(listUri)
 	if err != nil {
 		panic(err)
 	}
 	if resp.StatusCode != http.StatusOK {
+		fmt.Println(listUri)
 		return []string{}, fmt.Errorf("Please check input")
 	}
 	data, err := io.ReadAll(resp.Body)
@@ -301,7 +302,7 @@ func regressRequest(request Request, mapping map[string]string, count int) (int,
 
 		requestRegPassed = requestRegPassed && bytes.Equal(respBody, request.Out.Body)
 
-		fmt.Printf("Body: %s", string(respBody))
+		fmt.Printf("Body: %s\n", string(respBody))
 	} else {
 		// Only regress dependencies if the request itself isn't regressed
 		for _, dep := range request.Dependencies {
