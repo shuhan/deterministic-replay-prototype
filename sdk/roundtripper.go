@@ -34,7 +34,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		req.Header.Set(DepencencySequenceHeader, strconv.Itoa(gsq))
 		req.Header.Set(ScopedDependencySequenceHeader, strconv.Itoa(seq))
 		// DEBUG mode: If debug mode is enabled, we replace the URL with debug URL and let debug host decide what to do with it
-		debugUrl, err := url.Parse(sc.DebugHost)
+		debugUrl, err := url.Parse(sc.ProxyUrl)
 		if err != nil {
 			return nil, err
 		}

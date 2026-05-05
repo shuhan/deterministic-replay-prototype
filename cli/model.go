@@ -8,6 +8,7 @@ const (
 	ExecutionContextHeader         = "X-Execute-Context"
 	ServiceDebugHeader             = "X-Service-Debug"
 	DebugConfigHeader              = "X-Debug-Config"
+	DebugHostHeader                = "X-Debug-Host"
 	DepencencySequenceHeader       = "X-Dependency-Sequence"
 	ScopedDependencySequenceHeader = "X-Scoped-Dependency-Sequence"
 

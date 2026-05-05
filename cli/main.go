@@ -21,10 +21,12 @@ func main() {
 
 	switch input.Action {
 	case ShowAction:
-		request, err := getRequest(input.RequestContext)
+		records, err := getRecords(input.RequestContext)
 		if err != nil {
 			panic(err)
 		}
+		request := getRequest(input.RequestContext, records)
+
 		printRequest(request, request.Out.StatusCode, 0)
 	case ReplayAction:
 		if len(input.Mapping) == 0 {
@@ -32,10 +34,17 @@ func main() {
 			return
 		}
 
-		request, err := getRequest(input.RequestContext)
+		records, err := getRecords(input.RequestContext)
 		if err != nil {
 			panic(err)
 		}
+		addDebugData(input.RequestContext, records)
+		closer, err := startDebugHost()
+		defer closer()
+		if err != nil {
+			panic(err)
+		}
+		request := getRequest(input.RequestContext, records)
 
 		count := replayRequest(request, input.Mapping, 0)
 		if count == 0 {
@@ -59,15 +68,33 @@ func main() {
 
 		regressFailCount := 0
 
-		for i, rc := range list {
-			fmt.Printf("Regressing request (%d) %s\n", i+1, rc)
-			request, err := getRequest(rc)
+		for _, rc := range list {
+			records, err := getRecords(rc)
 			if err != nil {
 				fmt.Printf("Error regressing request: %s\n", err.Error())
 				regressFailCount++
 				continue
 			}
 
+			addDebugData(rc, records)
+		}
+
+		closer, err := startDebugHost()
+		defer closer()
+		if err != nil {
+			panic(err)
+		}
+
+		for i, rc := range list {
+			records := getDebugRecords(rc)
+
+			if records == nil {
+				continue // Previously fail counted
+			}
+
+			request := getRequest(rc, records)
+
+			fmt.Printf("Regressing request (%d) %s\n", i+1, rc)
 			_, passed := regressRequest(request, input.Mapping, 0)
 			if !passed {
 				fmt.Println("Regression failed")
@@ -114,27 +141,42 @@ func getList(serviceNames []string, excludedContexts []string, statusCodes []int
 	return list, nil
 }
 
-func getRequest(rc string) (Request, error) {
-	treeUri := systemHost + "/tree?rc=" + rc
+func getRequest(rc string, records []Record) Request {
+	ec := ""
+	// Find the initial request
+	for _, r := range records {
+		// Records of inital request has cause context as request context
+		if r.RequestContext == rc && r.CauseContext == rc {
+			ec = r.ExecutionContext
+			break
+		}
+	}
 
-	resp, err := http.Get(treeUri)
+	return buildRequestTree(records, ec)
+}
+
+func getRecords(rc string) ([]Record, error) {
+	getUri := systemHost + "/get?rc=" + rc
+
+	resp, err := http.Get(getUri)
 	if err != nil {
 		panic(err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return Request{}, fmt.Errorf("Coudn't find request %s", rc)
+		return nil, fmt.Errorf("Coudn't find request %s", rc)
 	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return Request{}, err
+		return nil, err
 	}
 
-	request := Request{}
+	records := []Record{}
 
-	if err = json.Unmarshal(data, &request); err != nil {
-		return Request{}, err
+	if err = json.Unmarshal(data, &records); err != nil {
+		return nil, err
 	}
-	return request, nil
+
+	return records, nil
 }
 
 func getPreposition(level int) string {
@@ -218,6 +260,7 @@ func replayRequest(request Request, mapping map[string]string, count int) int {
 		httpRquest.Header.Set(ExecutionContextHeader, in.ExecutionContext)
 		httpRquest.Header.Set(ServiceDebugHeader, DebugEnabled)
 		httpRquest.Header.Set(DebugConfigHeader, debugConfig(mapping))
+		httpRquest.Header.Set(DebugHostHeader, DebugHost)
 
 		resp, err := http.DefaultClient.Do(httpRquest)
 		if err != nil {
@@ -242,19 +285,6 @@ func replayRequest(request Request, mapping map[string]string, count int) int {
 		}
 	}
 	return count
-}
-
-func debugConfig(mapping map[string]string) string {
-	retval := ""
-
-	for k, v := range mapping {
-		if retval != "" {
-			retval += "|"
-		}
-		retval += k + "=" + v
-	}
-
-	return retval
 }
 
 func regressRequest(request Request, mapping map[string]string, count int) (int, bool) {
@@ -286,6 +316,7 @@ func regressRequest(request Request, mapping map[string]string, count int) (int,
 		httpRquest.Header.Set(ExecutionContextHeader, in.ExecutionContext)
 		httpRquest.Header.Set(ServiceDebugHeader, DebugEnabled)
 		httpRquest.Header.Set(DebugConfigHeader, debugConfig(mapping))
+		httpRquest.Header.Set(DebugHostHeader, DebugHost)
 
 		resp, err := http.DefaultClient.Do(httpRquest)
 		if err != nil {
