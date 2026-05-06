@@ -39,7 +39,7 @@ func getHandler(w http.ResponseWriter, r *http.Request) {
 
 	name := r.URL.Query().Get("name")
 
-	const serviceBUrl = "http://localhost:3001/boost-factor?nombre="
+	const serviceBUrl = "http://localhost:3001/boost-factor?name="
 
 	data, err := sdk.GetWithContext(r.Context(), serviceBUrl+name)
 	if err != nil {

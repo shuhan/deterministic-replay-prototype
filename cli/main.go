@@ -20,26 +20,28 @@ func main() {
 
 	switch input.Action {
 	case ShowAction:
-		records, err := GetRecords(input.RequestContext)
-		if err != nil {
-			fmt.Println(err)
+		if len(input.RequestContext) == 0 {
+			fmt.Println("No request context specified")
 			return
 		}
-		request := BuildRequest(input.RequestContext, records)
-
-		PrintRequest(request, request.Out.StatusCode, 0)
+		for _, rc := range input.RequestContext {
+			records, err := GetRecords(rc)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			request := BuildRequest(rc, records)
+			PrintRequest(request, request.Out.StatusCode, 0)
+		}
 	case ReplayAction:
 		if len(input.Mapping) == 0 {
 			fmt.Println("No service mapping to replay")
 			return
 		}
-
-		records, err := GetRecords(input.RequestContext)
-		if err != nil {
-			fmt.Println(err)
+		if len(input.RequestContext) == 0 {
+			fmt.Println("No request context specified")
 			return
 		}
-		request := BuildRequest(input.RequestContext, records)
 
 		closer, err := StartDebugHost(input.AllowDiversion, input.NoFlagDiversion)
 		defer closer()
@@ -47,9 +49,18 @@ func main() {
 			fmt.Println(err)
 			return
 		}
-		count := replayRequest(request, input.Mapping, 0)
-		if count == 0 {
-			fmt.Println("No replayable service mapping")
+
+		for _, rc := range input.RequestContext {
+			records, err := GetRecords(rc)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			request := BuildRequest(rc, records)
+			count := replayRequest(request, input.Mapping, 0)
+			if count == 0 {
+				fmt.Println("No replayable service mapping")
+			}
 		}
 	case RegressAction:
 		if len(input.Mapping) == 0 {
@@ -62,7 +73,7 @@ func main() {
 			serviceNames = append(serviceNames, k)
 		}
 
-		list, err := getList(serviceNames, []string{input.RequestContext}, input.ValidStatus, input.MaxCount)
+		list, err := getList(serviceNames, input.RequestContext, input.ValidStatus, input.MaxCount)
 		if err != nil {
 			fmt.Println(err)
 			return

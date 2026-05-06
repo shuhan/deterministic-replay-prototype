@@ -65,8 +65,8 @@ func parseNextArg(i *Input, arg string, ctx parsingContext) parsingContext {
 
 	switch ctx {
 	case parsingContextRequest:
-		i.RequestContext = arg
-		return parsingContextNone
+		i.RequestContext = append(i.RequestContext, arg)
+		return parsingContextRequest
 	case parsingContextMap:
 		sh := strings.Split(arg, "=")
 		if len(sh) == 2 {

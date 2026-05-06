@@ -25,7 +25,7 @@ const (
 
 type Input struct {
 	Action            Action
-	RequestContext    string
+	RequestContext    []string
 	Mapping           map[string]string
 	ValidStatus       []int
 	MaxCount          int
