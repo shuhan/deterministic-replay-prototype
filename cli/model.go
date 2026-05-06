@@ -8,6 +8,7 @@ const (
 	ExecutionContextHeader         = "X-Execute-Context"
 	ServiceDebugHeader             = "X-Service-Debug"
 	DebugConfigHeader              = "X-Debug-Config"
+	DebugHostHeader                = "X-Debug-Host"
 	DepencencySequenceHeader       = "X-Dependency-Sequence"
 	ScopedDependencySequenceHeader = "X-Scoped-Dependency-Sequence"
 
@@ -17,14 +18,20 @@ const (
 type Action string
 
 const (
-	ShowAction   = Action("show")
-	ReplayAction = Action("replay")
+	ShowAction    = Action("show")
+	ReplayAction  = Action("replay")
+	RegressAction = Action("regress")
 )
 
 type Input struct {
-	Action         Action
-	RequestContext string
-	Mapping        map[string]string
+	Action            Action
+	RequestContext    []string
+	Mapping           map[string]string
+	ValidStatus       []int
+	MaxCount          int
+	RegressDependency bool
+	AllowDiversion    bool
+	NoFlagDiversion   bool
 }
 
 type RecordType string

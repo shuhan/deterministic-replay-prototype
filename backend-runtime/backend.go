@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,10 +67,9 @@ func main() {
 
 	data = make(map[string][]Record)
 
-	http.HandleFunc("/runtime/record", recordHandler)
-	http.HandleFunc("/runtime/replay", replayHandler)
-	http.HandleFunc("/runtime/proxy", proxyHandler)
-	http.HandleFunc("/runtime/observations", observationHandler)
+	http.HandleFunc("/record", recordHandler)
+	http.HandleFunc("/list", listHandler)
+	http.HandleFunc("/get", getHandler)
 
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		panic(err)
@@ -126,7 +125,131 @@ func recordHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func replayHandler(w http.ResponseWriter, r *http.Request) {
+func listHandler(w http.ResponseWriter, r *http.Request) {
+	var (
+		badRequest bool
+		oErr       error
+	)
+
+	defer func() {
+		if badRequest {
+			w.WriteHeader(http.StatusBadRequest)
+		} else if oErr != nil {
+			fmt.Printf("ERROR: %s\n", oErr.Error())
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}()
+
+	if r.Method != "GET" {
+		badRequest = true
+		return
+	}
+
+	queries := r.URL.Query()
+	sr := queries.Get("sr") // Service names ; seperated
+	ex := queries.Get("ex") // Excluded request contexts ; seperated
+	st := queries.Get("st") // HTTP Status Codes ; seperated
+	n := queries.Get("n")
+
+	if sr == "" {
+		badRequest = true
+		return
+	}
+
+	serviceNames := strings.Split(sr, "|")
+
+	for i := range serviceNames {
+		serviceNames[i] = strings.ToLower(serviceNames[i])
+	}
+
+	MaxCount := 10
+
+	if n != "" {
+		MaxCount, oErr = strconv.Atoi(n)
+		if oErr != nil {
+			badRequest = true
+			return
+		}
+	}
+
+	statusFilterEnabled := st != ""
+	statuses := []int{}
+
+	if statusFilterEnabled {
+		sts := strings.SplitSeq(st, "|")
+
+		for s := range sts {
+			status, err := strconv.Atoi(s)
+			if err != nil {
+				oErr = err
+				return
+			}
+			statuses = append(statuses, status)
+		}
+	}
+
+	excludes := []string{}
+
+	if ex != "" {
+		excludes = strings.Split(ex, "|")
+	}
+
+	rwMux.RLock()
+	defer rwMux.RUnlock()
+
+	resp := []string{}
+
+Itr:
+	for key, recs := range data {
+
+		hasService := false
+
+		for ri := range recs {
+			if inArray(serviceNames, strings.ToLower(recs[ri].ServiceName)) {
+				hasService = true
+			}
+
+			if statusFilterEnabled {
+				if recs[ri].RecordType == DependencyResponseRecordType || recs[ri].RecordType == ResponseRecordType {
+					if !inArray(statuses, recs[ri].StatusCode) {
+						continue Itr
+					}
+				}
+			}
+		}
+
+		if !hasService {
+			continue
+		}
+
+		if !inArray(excludes, key) {
+			resp = append(resp, key)
+			if len(resp) == MaxCount {
+				break
+			}
+		}
+	}
+
+	if body, oErr := json.Marshal(resp); oErr == nil {
+		w.Header().Add("Content-Type", "application/json")
+		_, oErr = w.Write(body)
+	}
+}
+
+func inArray[T any](haystack []T, niddle T) bool {
+	if len(haystack) == 0 {
+		return false
+	}
+
+	for _, h := range haystack {
+		if reflect.DeepEqual(h, niddle) {
+			return true
+		}
+	}
+	return false
+}
+
+func getHandler(w http.ResponseWriter, r *http.Request) {
 	var (
 		badRequest bool
 		oErr       error
@@ -157,288 +280,10 @@ func replayHandler(w http.ResponseWriter, r *http.Request) {
 	rwMux.RLock()
 	defer rwMux.RUnlock()
 	if records, ok := data[rc]; ok {
-
-		ec := ""
-		// Find the initial request
-		for _, r := range records {
-			// Records of inital request has cause context as request context
-			if r.RequestContext == rc && r.CauseContext == rc {
-				ec = r.ExecutionContext
-				break
-			}
-		}
-
-		req := buildRequestTree(records, ec)
-		if body, oErr := json.Marshal(req); oErr == nil {
+		if body, oErr := json.Marshal(records); oErr == nil {
 			w.Header().Add("Content-Type", "application/json")
 			_, oErr = w.Write(body)
 		}
-	} else {
-		w.WriteHeader(http.StatusNotFound)
-	}
-}
-
-func buildRequestTree(records []Record, ec string) Request {
-	req := Request{
-		Dependencies: make([]Dependency, len(records)),
-		Observations: make([]Record, len(records)),
-	}
-
-	notUsed := make([]Record, 0, len(records))
-
-	maxGsq := -1
-	maxOsq := -1
-
-	for i := range records {
-		if records[i].ExecutionContext == ec {
-			switch records[i].RecordType {
-			case RequestRecordType:
-				req.In = records[i]
-			case ResponseRecordType:
-				req.Out = records[i]
-			case DependencyRequestRecordType:
-				req.Dependencies[records[i].DepencencySequence].In = records[i]
-				if records[i].DepencencySequence > maxGsq {
-					maxGsq = records[i].DepencencySequence
-				}
-			case DependencyResponseRecordType:
-				req.Dependencies[records[i].DepencencySequence].Out = records[i]
-				if records[i].DepencencySequence > maxGsq {
-					maxGsq = records[i].DepencencySequence
-				}
-			case ObservedRecordType:
-				req.Observations[records[i].ObservationSequence] = records[i]
-				if records[i].ObservationSequence > maxOsq {
-					maxOsq = records[i].ObservationSequence
-				}
-			default:
-				fmt.Printf("Unknown record %v\n", records[i])
-			}
-		} else {
-			notUsed = append(notUsed, records[i])
-		}
-	}
-
-	req.Dependencies = req.Dependencies[0 : maxGsq+1]
-	req.Observations = req.Observations[0 : maxOsq+1]
-
-	for i := range req.Dependencies {
-		if req.Dependencies[i].In.DependencyContext != "" {
-			req.Dependencies[i].Reference = buildRequestTree(notUsed, req.Dependencies[i].In.DependencyContext)
-		}
-	}
-
-	return req
-}
-
-const (
-	RequestContextHeader           = "X-Request-Context"
-	CauseContextHeader             = "X-Cause-Context"
-	ExecutionContextHeader         = "X-Execute-Context"
-	ServiceDebugHeader             = "X-Service-Debug"
-	DebugConfigHeader              = "X-Debug-Config"
-	DepencencySequenceHeader       = "X-Dependency-Sequence"
-	ScopedDependencySequenceHeader = "X-Scoped-Dependency-Sequence"
-
-	DebugEnabled = "ENABLED"
-)
-
-func proxyHandler(w http.ResponseWriter, r *http.Request) {
-	var (
-		badRequest bool
-		oErr       error
-	)
-
-	defer func() {
-		if badRequest {
-			w.WriteHeader(http.StatusBadRequest)
-		} else if oErr != nil {
-			fmt.Printf("ERROR: %s\n", oErr.Error())
-			w.WriteHeader(http.StatusInternalServerError)
-		}
-	}()
-
-	queries := r.URL.Query()
-	originalUrl := queries.Get("ref")
-
-	rc := r.Header.Get(RequestContextHeader)
-	cc := r.Header.Get(CauseContextHeader)
-	ss := r.Header.Get(ScopedDependencySequenceHeader)
-	dc := r.Header.Get(DebugConfigHeader)
-
-	seq, err := strconv.Atoi(ss)
-	if err != nil {
-		badRequest = true
-		oErr = err
-		return
-	}
-
-	mapping := parseDebugConfig(dc)
-
-	rwMux.RLock()
-	defer rwMux.RUnlock()
-	if records, ok := data[rc]; ok {
-		var depRes, depInReq Record
-		for _, rec := range records {
-			if rec.RecordType == DependencyResponseRecordType && rec.ExecutionContext == cc && rec.Uri == originalUrl && rec.ScopedSequence == seq {
-				depRes = rec
-				break
-			}
-		}
-
-		for _, rec := range records {
-			if rec.RecordType == RequestRecordType && rec.ExecutionContext == depRes.DependencyContext {
-				depInReq = rec
-				break
-			}
-		}
-
-		if host, ok := mapping[strings.ToLower(depInReq.ServiceName)]; ok {
-			// forward request
-			reqUrl, err := url.Parse(originalUrl)
-			if err != nil {
-				oErr = err
-				return
-			}
-			reqUrl.Host = host
-			if strings.HasPrefix(host, "localhost") {
-				reqUrl.Scheme = "http"
-			} else {
-				reqUrl.Scheme = "https"
-			}
-
-			req, err := http.NewRequest(r.Method, reqUrl.String(), r.Body)
-			if err != nil {
-				oErr = err
-				return
-			}
-
-			for name, val := range depInReq.Header {
-				if len(val) > 0 {
-					req.Header.Add(name, val[0])
-				}
-			}
-
-			req.Header.Set(RequestContextHeader, depInReq.RequestContext)
-			req.Header.Set(CauseContextHeader, depInReq.CauseContext)
-			req.Header.Set(ExecutionContextHeader, depInReq.ExecutionContext)
-			req.Header.Set(ServiceDebugHeader, DebugEnabled)
-			req.Header.Set(DebugConfigHeader, dc)
-
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				oErr = err
-				return
-			}
-
-			for name, val := range resp.Header {
-				if len(val) > 0 {
-					w.Header().Add(name, val[0])
-				}
-			}
-			w.WriteHeader(resp.StatusCode)
-			if resp.ContentLength > 0 {
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					oErr = err
-					return
-				}
-				w.Write(body)
-			}
-
-		} else {
-			// Forward snapshot
-			for name, val := range depRes.Header {
-				if len(val) > 0 {
-					w.Header().Add(name, val[0])
-				}
-			}
-			w.WriteHeader(depRes.StatusCode)
-			if len(depRes.Body) > 0 {
-				w.Write(depRes.Body)
-			}
-		}
-	} else {
-		w.WriteHeader(http.StatusNotFound)
-	}
-}
-
-func parseDebugConfig(config string) map[string]string {
-	shs := strings.Split(config, "|")
-
-	retval := make(map[string]string, len(shs))
-
-	for _, s := range shs {
-		sh := strings.Split(s, "=")
-		if len(sh) == 2 {
-			retval[sh[0]] = sh[1]
-		}
-	}
-
-	return retval
-}
-
-type ObservationData struct {
-	Body             []byte `json:"bd"`
-	ObservationError []byte `json:"oe"`
-}
-
-type Observations struct {
-	Data map[string]map[int]ObservationData `json:"data"`
-}
-
-func observationHandler(w http.ResponseWriter, r *http.Request) {
-	var (
-		badRequest bool
-		oErr       error
-	)
-
-	defer func() {
-		if badRequest {
-			w.WriteHeader(http.StatusBadRequest)
-		} else if oErr != nil {
-			fmt.Printf("ERROR: %s\n", oErr.Error())
-			w.WriteHeader(http.StatusInternalServerError)
-		}
-	}()
-
-	if r.Method != "GET" {
-		badRequest = true
-		return
-	}
-
-	rc := r.Header.Get(RequestContextHeader)
-	dc := r.Header.Get(DebugConfigHeader)
-
-	mapping := parseDebugConfig(dc)
-
-	rwMux.RLock()
-	defer rwMux.RUnlock()
-	if records, ok := data[rc]; ok {
-
-		obs := Observations{
-			Data: make(map[string]map[int]ObservationData, len(records)),
-		}
-
-		for _, rec := range records {
-			if rec.RecordType == ObservedRecordType {
-				mappingKey := strings.ToLower(rec.ServiceName + ":" + rec.ObservationName)
-				if mapped, ok := mapping[mappingKey]; !(ok && mapped == "pass") {
-					if _, ok := obs.Data[rec.ObservationName]; !ok {
-						obs.Data[rec.ObservationName] = make(map[int]ObservationData)
-					}
-					obs.Data[rec.ObservationName][rec.ScopedSequence] = ObservationData{Body: rec.Body, ObservationError: rec.ObservationError}
-				}
-			}
-		}
-
-		data, err := json.Marshal(obs)
-		if err != nil {
-			oErr = err
-			return
-		}
-
-		w.Write(data)
 	} else {
 		w.WriteHeader(http.StatusNotFound)
 	}

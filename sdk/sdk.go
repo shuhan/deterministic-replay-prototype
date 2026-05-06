@@ -13,23 +13,19 @@ var (
 	serviceName  string
 	logEnabled   bool
 	debugEnabled bool
-	systemHost   string
-	debugHost    string
-	observerHost string
+	backendHost  string
 	feeder       chan<- Record
 	cancelFunc   context.CancelFunc
 )
 
 func Init(name, host string, log, debug bool) {
 	serviceName = name
-	systemHost = host
-	debugHost = systemHost + "/runtime/proxy"
-	observerHost = systemHost + "/runtime/observations"
+	backendHost = host
 	logEnabled = log
 	debugEnabled = debug
 	InstrumentClient(DefaultClient)
 	InstrumentClient(http.DefaultClient) // This is to make force an error when http.Get or http.Post is called
-	feeder, cancelFunc = processInBackground(systemHost)
+	feeder, cancelFunc = processInBackground(backendHost)
 }
 
 func Close() {
@@ -50,7 +46,7 @@ func processInBackground(host string) (chan<- Record, context.CancelFunc) {
 
 	go func(feederChan <-chan Record, ctx context.Context) {
 		records := make([]Record, 0, 100)
-		postUrl := host + "/runtime/record"
+		postUrl := host + "/record"
 		client := &http.Client{}
 
 		for {

@@ -20,6 +20,7 @@ const (
 	ExecutionContextHeader         = "X-Execute-Context"
 	ServiceDebugHeader             = "X-Service-Debug"
 	DebugConfigHeader              = "X-Debug-Config"
+	DebugHostHeader                = "X-Debug-Host"
 	DepencencySequenceHeader       = "X-Dependency-Sequence"
 	ScopedDependencySequenceHeader = "X-Scoped-Dependency-Sequence"
 
@@ -42,6 +43,8 @@ type ServiceContext struct {
 	Debug               bool
 	DebugConfig         string // ServiceName:Hostname|ServiceName:Hostname tells debug host how to route requests
 	DebugHost           string
+	ProxyUrl            string
+	ObservationUrl      string
 	depencencySequence  int
 	scopedSequenc       map[string]int
 	observationSequence int
@@ -102,9 +105,8 @@ var ObserverClient = &http.Client{}
 
 func (sc *ServiceContext) LoadObservations() {
 	waiter := make(chan interface{})
-
 	go func() {
-		req, err := http.NewRequest(http.MethodGet, observerHost, nil)
+		req, err := http.NewRequest(http.MethodGet, sc.ObservationUrl, nil)
 		if err != nil {
 			fmt.Printf("Error creating observation request: %s\n", err.Error())
 			close(waiter)
@@ -152,14 +154,25 @@ func NewServiceContext(r *http.Request) (*ServiceContext, error) {
 		CauseContext:        r.Header.Get(CauseContextHeader),
 		ExecutionContext:    r.Header.Get(ExecutionContextHeader),
 		DebugConfig:         r.Header.Get(DebugConfigHeader),
-		Debug:               r.Header.Get(ServiceDebugHeader) == DebugEnabled,
+		Debug:               r.Header.Get(ServiceDebugHeader) == DebugEnabled && debugEnabled,
 		depencencySequence:  0,
 		scopedSequenc:       map[string]int{},
 		observationSequence: 0,
 	}
 
 	if s.Debug {
-		s.DebugHost = debugHost
+		s.DebugHost = r.Header.Get(DebugHostHeader)
+
+		if s.DebugHost == "" {
+			return s, fmt.Errorf("No debug host provided")
+		}
+
+		if !strings.HasPrefix(s.DebugHost, "http://localhost:") {
+			return s, fmt.Errorf("Illegal attempt to initiate debug from remote host %s\n", s.DebugHost)
+		}
+
+		s.ProxyUrl = s.DebugHost + "/proxy"
+		s.ObservationUrl = s.DebugHost + "/observations"
 		s.LoadObservations()
 	}
 
@@ -172,10 +185,6 @@ func NewServiceContext(r *http.Request) (*ServiceContext, error) {
 
 	if s.CauseContext == "" || s.ExecutionContext == "" {
 		return s, fmt.Errorf("Internal request missing context")
-	}
-
-	if s.Debug && s.DebugHost == "" {
-		return s, fmt.Errorf("invalid debug request")
 	}
 
 	return s, nil
