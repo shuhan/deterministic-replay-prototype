@@ -37,10 +37,12 @@ func ParseInput() (Input, error) {
 type parsingContext string
 
 const (
-	parsingContextNone    = parsingContext("NONE")
-	parsingContextRequest = parsingContext("--request")
-	parsingContextMap     = parsingContext("--map")
-	parsingContextCount   = parsingContext("--count")
+	parsingContextNone              = parsingContext("NONE")
+	parsingContextRequest           = parsingContext("--request")
+	parsingContextMap               = parsingContext("--map")
+	parsingContextCount             = parsingContext("--count")
+	parsingContextRegressDependency = parsingContext("--regress-dependency")
+	parsingContextAllowDiversion    = parsingContext("--allow-diversion")
 )
 
 func parseNextArg(i *Input, arg string, ctx parsingContext) parsingContext {
@@ -51,6 +53,12 @@ func parseNextArg(i *Input, arg string, ctx parsingContext) parsingContext {
 		return parsingContextMap
 	case string(parsingContextCount):
 		return parsingContextCount
+	case string(parsingContextRegressDependency):
+		i.RegressDependency = true
+		return parsingContextNone
+	case string(parsingContextAllowDiversion):
+		i.AllowDiversion = true
+		return parsingContextNone
 	}
 
 	switch ctx {

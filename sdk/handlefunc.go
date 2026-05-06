@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 )
@@ -15,6 +16,7 @@ func WithAudit(handler func(http.ResponseWriter, *http.Request)) func(http.Respo
 		start := time.Now()
 		serviceContext, err := NewServiceContext(r)
 		if err != nil {
+			fmt.Println(err)
 			w.WriteHeader(http.StatusBadRequest)
 			w.Write([]byte("Invalid context"))
 			return

@@ -1,21 +1,36 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 )
 
 type CloseFunc func()
 
-var DebugHost string
+var (
+	DebugHost                  string
+	dependencyRegressionPassed bool
+	allowRequestDiversion      bool
+)
 
-func StartDebugHost() (CloseFunc, error) {
+func ResetDependencyRegression() {
+	dependencyRegressionPassed = true
+}
+
+func hasDependencyRegressionPassed() bool {
+	return dependencyRegressionPassed
+}
+
+func StartDebugHost(allowDiversion bool) (CloseFunc, error) {
+	allowRequestDiversion = allowDiversion
 	listener, err := net.Listen("tcp", ":0")
 	if err != nil {
 		return func() {}, err
@@ -84,10 +99,73 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		for _, rec := range records {
-			if rec.RecordType == RequestRecordType && rec.ExecutionContext == depRes.DependencyContext {
-				depInReq = rec
-				break
+		var body []byte
+
+		// here if depRes is not set, we failed to resolve dependency call so we
+		if reflect.ValueOf(depRes).IsZero() {
+			dependencyRegressionPassed = false
+			fmt.Printf("Request diversed at this point, URL: %s was not recorded\n", originalUrl)
+			if allowRequestDiversion {
+				// shall we pass through with warning
+				fmt.Println("Request being diverted to source")
+				req, err := http.NewRequest(r.Method, originalUrl, r.Body)
+				if err != nil {
+					oErr = err
+					return
+				}
+
+				for name, val := range r.Header {
+					if len(val) > 0 {
+						req.Header.Add(name, val[0])
+					}
+				}
+
+				req.Header.Set(DebugHostHeader, DebugHost)
+
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					oErr = err
+					return
+				}
+
+				for name, val := range resp.Header {
+					if len(val) > 0 {
+						w.Header().Add(name, val[0])
+					}
+				}
+				w.WriteHeader(resp.StatusCode)
+				if resp.ContentLength > 0 {
+					body, err := io.ReadAll(resp.Body)
+					if err != nil {
+						oErr = err
+						return
+					}
+					w.Write(body)
+				}
+			} else {
+				fmt.Println("Request diversion not allowed")
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte("Request diversion not allowed"))
+			}
+			return
+		} else {
+
+			for _, rec := range records {
+				if rec.RecordType == RequestRecordType && rec.ExecutionContext == depRes.DependencyContext {
+					depInReq = rec
+					break
+				}
+			}
+			if r.Body != nil {
+				body, err = io.ReadAll(r.Body)
+				if err != nil {
+					oErr = err
+					return
+				}
+			}
+
+			if r.Method != depInReq.Method || !bytes.Equal(body, depInReq.Body) {
+				dependencyRegressionPassed = false
 			}
 		}
 
@@ -105,7 +183,13 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 				reqUrl.Scheme = "https"
 			}
 
-			req, err := http.NewRequest(r.Method, reqUrl.String(), r.Body)
+			var requestBody io.Reader
+
+			if body != nil {
+				requestBody = bytes.NewBuffer(body)
+			}
+
+			req, err := http.NewRequest(r.Method, reqUrl.String(), requestBody)
 			if err != nil {
 				oErr = err
 				return

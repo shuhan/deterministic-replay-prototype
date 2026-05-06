@@ -24,11 +24,13 @@ const (
 )
 
 type Input struct {
-	Action         Action
-	RequestContext string
-	Mapping        map[string]string
-	ValidStatus    []int
-	MaxCount       int
+	Action            Action
+	RequestContext    string
+	Mapping           map[string]string
+	ValidStatus       []int
+	MaxCount          int
+	RegressDependency bool
+	AllowDiversion    bool
 }
 
 type RecordType string

@@ -41,7 +41,7 @@ func main() {
 		}
 		request := BuildRequest(input.RequestContext, records)
 
-		closer, err := StartDebugHost()
+		closer, err := StartDebugHost(input.AllowDiversion)
 		defer closer()
 		if err != nil {
 			fmt.Println(err)
@@ -70,7 +70,7 @@ func main() {
 
 		regressFailCount := 0
 
-		closer, err := StartDebugHost()
+		closer, err := StartDebugHost(input.AllowDiversion)
 		defer closer()
 		if err != nil {
 			fmt.Println(err)
@@ -86,10 +86,16 @@ func main() {
 			}
 
 			request := BuildRequest(rc, records)
+			ResetDependencyRegression()
 			_, passed := regressRequest(request, input.Mapping, 0)
 			if !passed {
 				fmt.Println("Regression failed")
 				regressFailCount++
+			} else {
+				if input.RegressDependency && !hasDependencyRegressionPassed() {
+					fmt.Println("Dependency Regression Failed")
+					regressFailCount++
+				}
 			}
 		}
 
@@ -230,7 +236,7 @@ func regressRequest(request Request, mapping map[string]string, count int) (int,
 			return count, false
 		}
 
-		requestRegPassed = requestRegPassed && bytes.Equal(respBody, request.Out.Body)
+		requestRegPassed = requestRegPassed && resp.StatusCode == request.Out.StatusCode && bytes.Equal(respBody, request.Out.Body)
 
 		fmt.Printf("Body: %s\n", string(respBody))
 	} else {
