@@ -2,7 +2,7 @@ package main
 
 import "strings"
 
-func debugConfig(mapping map[string]string) string {
+func BuildDebugConfig(mapping map[string]string) string {
 	retval := ""
 
 	for k, v := range mapping {
@@ -15,7 +15,7 @@ func debugConfig(mapping map[string]string) string {
 	return retval
 }
 
-func parseDebugConfig(config string) map[string]string {
+func ParseDebugConfig(config string) map[string]string {
 	shs := strings.Split(config, "|")
 
 	retval := make(map[string]string, len(shs))

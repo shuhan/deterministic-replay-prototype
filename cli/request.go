@@ -1,6 +1,41 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
+
+func BuildRequest(rc string, records []Record) Request {
+	ec := ""
+	// Find the initial request
+	for _, r := range records {
+		// Records of inital request has cause context as request context
+		if r.RequestContext == rc && r.CauseContext == rc {
+			ec = r.ExecutionContext
+			break
+		}
+	}
+
+	return buildRequestTree(records, ec)
+}
+
+func PrintRequest(request Request, statusCode, level int) {
+	pre := getPreposition(level)
+	serviceName := request.Out.ServiceName
+	if serviceName == "" {
+		serviceName = "[External]"
+	}
+	fmt.Printf("%s-> %s (%d)\n", pre, serviceName, statusCode)
+
+	obPre := getPreposition(level + 1)
+	for i := range request.Observations {
+		fmt.Printf("%s-> Internal <%s[%d]>\n", obPre, request.Observations[i].ObservationName, request.Observations[i].ScopedSequence)
+	}
+
+	for i := range request.Dependencies {
+		PrintRequest(request.Dependencies[i].Reference, request.Dependencies[i].Out.StatusCode, level+1)
+	}
+}
 
 func buildRequestTree(records []Record, ec string) Request {
 	req := Request{
@@ -53,4 +88,8 @@ func buildRequestTree(records []Record, ec string) Request {
 	}
 
 	return req
+}
+
+func getPreposition(level int) string {
+	return strings.Join(make([]string, level+1), "    ")
 }

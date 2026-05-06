@@ -9,38 +9,13 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 type CloseFunc func()
 
-var (
-	data      map[string][]Record
-	rwMux     sync.RWMutex
-	DebugHost string
-)
+var DebugHost string
 
-func getDebugRecords(rc string) []Record {
-	rwMux.RLock()
-	defer rwMux.RUnlock()
-
-	if records, ok := data[rc]; ok {
-		return records
-	}
-
-	return nil
-}
-
-func addDebugData(rc string, records []Record) {
-	rwMux.Lock()
-	defer rwMux.Unlock()
-	if data == nil {
-		data = make(map[string][]Record)
-	}
-	data[rc] = records
-}
-
-func startDebugHost() (CloseFunc, error) {
+func StartDebugHost() (CloseFunc, error) {
 	listener, err := net.Listen("tcp", ":0")
 	if err != nil {
 		return func() {}, err
@@ -48,7 +23,13 @@ func startDebugHost() (CloseFunc, error) {
 	port := listener.Addr().(*net.TCPAddr).Port
 	DebugHost = fmt.Sprintf("http://localhost:%d", port)
 
+	waitFor := make(chan any)
+
 	go func() {
+		defer func() {
+			fmt.Println("Debug host closed")
+			close(waitFor)
+		}()
 		http.HandleFunc("/proxy", proxyHandler)
 		http.HandleFunc("/observations", observationHandler)
 		http.Serve(listener, nil)
@@ -58,6 +39,7 @@ func startDebugHost() (CloseFunc, error) {
 
 	return func() {
 		listener.Close()
+		<-waitFor
 	}, nil
 }
 
@@ -91,11 +73,9 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mapping := parseDebugConfig(dc)
+	mapping := ParseDebugConfig(dc)
 
-	rwMux.RLock()
-	defer rwMux.RUnlock()
-	if records, ok := data[rc]; ok {
+	if records, err := GetRecords(rc); err == nil {
 		var depRes, depInReq Record
 		for _, rec := range records {
 			if rec.RecordType == DependencyResponseRecordType && rec.ExecutionContext == cc && rec.Uri == originalUrl && rec.ScopedSequence == seq {
@@ -178,17 +158,18 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
+		fmt.Println(err)
 		w.WriteHeader(http.StatusNotFound)
 	}
 }
 
-type ObservationData struct {
+type observationData struct {
 	Body             []byte `json:"bd"`
 	ObservationError []byte `json:"oe"`
 }
 
-type Observations struct {
-	Data map[string]map[int]ObservationData `json:"data"`
+type observations struct {
+	Data map[string]map[int]observationData `json:"data"`
 }
 
 func observationHandler(w http.ResponseWriter, r *http.Request) {
@@ -214,14 +195,11 @@ func observationHandler(w http.ResponseWriter, r *http.Request) {
 	rc := r.Header.Get(RequestContextHeader)
 	dc := r.Header.Get(DebugConfigHeader)
 
-	mapping := parseDebugConfig(dc)
+	mapping := ParseDebugConfig(dc)
 
-	rwMux.RLock()
-	defer rwMux.RUnlock()
-	if records, ok := data[rc]; ok {
-
-		obs := Observations{
-			Data: make(map[string]map[int]ObservationData, len(records)),
+	if records, err := GetRecords(rc); err == nil {
+		obs := observations{
+			Data: make(map[string]map[int]observationData, len(records)),
 		}
 
 		for _, rec := range records {
@@ -229,9 +207,9 @@ func observationHandler(w http.ResponseWriter, r *http.Request) {
 				mappingKey := strings.ToLower(rec.ServiceName + ":" + rec.ObservationName)
 				if mapped, ok := mapping[mappingKey]; !(ok && mapped == "pass") {
 					if _, ok := obs.Data[rec.ObservationName]; !ok {
-						obs.Data[rec.ObservationName] = make(map[int]ObservationData)
+						obs.Data[rec.ObservationName] = make(map[int]observationData)
 					}
-					obs.Data[rec.ObservationName][rec.ScopedSequence] = ObservationData{Body: rec.Body, ObservationError: rec.ObservationError}
+					obs.Data[rec.ObservationName][rec.ScopedSequence] = observationData{Body: rec.Body, ObservationError: rec.ObservationError}
 				}
 			}
 		}
@@ -244,6 +222,7 @@ func observationHandler(w http.ResponseWriter, r *http.Request) {
 
 		w.Write(data)
 	} else {
+		fmt.Println(err)
 		w.WriteHeader(http.StatusNotFound)
 	}
 }
