@@ -19,6 +19,7 @@ var (
 	DebugHost                  string
 	dependencyRegressionPassed bool
 	allowRequestDiversion      bool
+	noflagRequestDiversion     bool
 )
 
 func ResetDependencyRegression() {
@@ -29,8 +30,9 @@ func hasDependencyRegressionPassed() bool {
 	return dependencyRegressionPassed
 }
 
-func StartDebugHost(allowDiversion bool) (CloseFunc, error) {
+func StartDebugHost(allowDiversion, noFlagDiversion bool) (CloseFunc, error) {
 	allowRequestDiversion = allowDiversion
+	noflagRequestDiversion = noFlagDiversion
 	listener, err := net.Listen("tcp", ":0")
 	if err != nil {
 		return func() {}, err
@@ -103,7 +105,9 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 		// here if depRes is not set, we failed to resolve dependency call so we
 		if reflect.ValueOf(depRes).IsZero() {
-			dependencyRegressionPassed = false
+			if !noflagRequestDiversion {
+				dependencyRegressionPassed = false
+			}
 			fmt.Printf("Request diversed at this point, URL: %s was not recorded\n", originalUrl)
 			if allowRequestDiversion {
 				// shall we pass through with warning

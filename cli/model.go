@@ -31,6 +31,7 @@ type Input struct {
 	MaxCount          int
 	RegressDependency bool
 	AllowDiversion    bool
+	NoFlagDiversion   bool
 }
 
 type RecordType string

@@ -41,7 +41,7 @@ func main() {
 		}
 		request := BuildRequest(input.RequestContext, records)
 
-		closer, err := StartDebugHost(input.AllowDiversion)
+		closer, err := StartDebugHost(input.AllowDiversion, input.NoFlagDiversion)
 		defer closer()
 		if err != nil {
 			fmt.Println(err)
@@ -70,7 +70,7 @@ func main() {
 
 		regressFailCount := 0
 
-		closer, err := StartDebugHost(input.AllowDiversion)
+		closer, err := StartDebugHost(input.AllowDiversion, input.NoFlagDiversion)
 		defer closer()
 		if err != nil {
 			fmt.Println(err)

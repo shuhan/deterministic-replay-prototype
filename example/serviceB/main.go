@@ -30,7 +30,7 @@ type BoostFactor struct {
 }
 
 func getHandler(w http.ResponseWriter, r *http.Request) {
-	name := r.URL.Query().Get("name")
+	name := r.URL.Query().Get("nombre")
 
 	const serviceCUrl = "http://localhost:3002/hit-count?name="
 

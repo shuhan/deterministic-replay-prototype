@@ -43,6 +43,8 @@ const (
 	parsingContextCount             = parsingContext("--count")
 	parsingContextRegressDependency = parsingContext("--regress-dependency")
 	parsingContextAllowDiversion    = parsingContext("--allow-diversion")
+
+	noFlagDiversion = "no-flag"
 )
 
 func parseNextArg(i *Input, arg string, ctx parsingContext) parsingContext {
@@ -58,7 +60,7 @@ func parseNextArg(i *Input, arg string, ctx parsingContext) parsingContext {
 		return parsingContextNone
 	case string(parsingContextAllowDiversion):
 		i.AllowDiversion = true
-		return parsingContextNone
+		return parsingContextAllowDiversion
 	}
 
 	switch ctx {
@@ -77,6 +79,11 @@ func parseNextArg(i *Input, arg string, ctx parsingContext) parsingContext {
 			fmt.Println("--count must be a number")
 		} else {
 			i.MaxCount = count
+		}
+		return parsingContextNone
+	case parsingContextAllowDiversion:
+		if arg == noFlagDiversion {
+			i.NoFlagDiversion = true
 		}
 		return parsingContextNone
 	default:
